@@ -1,5 +1,7 @@
 package tacticalview.fabric.render;
 
+import java.io.InputStream;
+import java.util.List;
 import java.util.Optional;
 
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -27,6 +29,8 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelTerrainRenderContext;
 
+import tacticalview.core.validate.AssetValidator;
+import tacticalview.core.validate.ModelStats;
 import tacticalview.fabric.TacticalViewClient;
 
 /**
@@ -58,12 +62,21 @@ public final class TacticalRenderer {
     private static final Vector3f MODEL_OFFSET = new Vector3f();
     private static final Matrix4f TEXTURE_MATRIX = new Matrix4f();
 
-    /** 外部（如 GLB 加载器）提供的状态，优先于测试立方体。 */
+    private static final String TEST_MODEL_PATH = "/assets/tacticalview/models/test_operator.glb";
+
+    /** 外部提供的状态，优先级最高。 */
     private volatile GeometryRenderState externalState;
-    /** 提取阶段生成的测试立方体；绘制阶段只读它的快照。 */
+    /** 提取阶段每帧由 GLB 模型生成（动画 + 蒙皮）；其次优先。 */
+    private volatile GeometryRenderState modelState;
+    /** 模型加载失败时回退用的测试立方体。 */
     private volatile GeometryRenderState testState;
-    /** 测试立方体锚点所属的玩家对象：换世界/重生会产生新的 LocalPlayer，借此重新定位。 */
+    /** 锚点所属的玩家对象：换世界/重生会产生新的 LocalPlayer，借此重新定位。 */
     private LocalPlayer anchoredFor;
+    private double anchorX, anchorY, anchorZ;
+    private float anchorYaw;
+
+    private ModelInstance model;
+    private final long startNanos = System.nanoTime();
 
     private StagedVertexBuffer.Draw pendingDraw;
     private boolean warnedBadTopology;
@@ -75,6 +88,7 @@ public final class TacticalRenderer {
     }
 
     public static void init() {
+        INSTANCE.loadTestModel();
         LevelExtractionEvents.END_EXTRACTION.register(INSTANCE::extract);
         LevelRenderEvents.BEFORE_RENDER_PASS.register(INSTANCE::prepare);
         LevelRenderEvents.END_MAIN.register(_ -> STAGED_BUFFER.endFrame());
@@ -86,6 +100,27 @@ public final class TacticalRenderer {
         this.externalState = state;
     }
 
+    /** 从 mod 资源里读测试模型。失败只记日志，渲染器回退到测试立方体。 */
+    private void loadTestModel() {
+        try (InputStream in = TacticalRenderer.class.getResourceAsStream(TEST_MODEL_PATH)) {
+            if (in == null) {
+                TacticalViewClient.LOGGER.warn("Test model not found at {}; falling back to the test cube", TEST_MODEL_PATH);
+                return;
+            }
+            ModelInstance loaded = ModelInstance.load(in.readAllBytes(), "Walk");
+            List<AssetValidator.Issue> issues =
+                    AssetValidator.validate(loaded.model(), AssetValidator.DEFAULT_TRIANGLE_BUDGET);
+            TacticalViewClient.LOGGER.info("Loaded test model: {} ({} validator notes), animation '{}'",
+                    ModelStats.of(loaded.model()), issues.size(), loaded.animationName());
+            for (AssetValidator.Issue issue : issues) {
+                TacticalViewClient.LOGGER.info("  model check: {}", issue);
+            }
+            this.model = loaded;
+        } catch (Exception e) {
+            TacticalViewClient.LOGGER.error("Failed to load test model; falling back to the test cube", e);
+        }
+    }
+
     // ------------------------------------------------------------------ 提取阶段
 
     private void extract(LevelExtractionContext context) {
@@ -94,9 +129,10 @@ public final class TacticalRenderer {
         if (player == null) {
             this.anchoredFor = null;
             this.testState = null;
+            this.modelState = null;
             return;
         }
-        if (this.anchoredFor != player || this.testState == null) {
+        if (this.anchoredFor != player) {
             Vec3 feet = player.position();
             Vec3 look = player.getLookAngle();
             double lx = look.x, lz = look.z;
@@ -106,10 +142,21 @@ public final class TacticalRenderer {
                 lz = 1;
                 len = 1;
             }
+            lx /= len;
+            lz /= len;
             // 玩家正前方 3 格（只取水平方向），固定在世界里不再随视角移动
-            this.testState = GeometryRenderState.coloredCube(
-                    feet.x + lx / len * 3.0, feet.y, feet.z + lz / len * 3.0);
+            this.anchorX = feet.x + lx * 3.0;
+            this.anchorY = feet.y;
+            this.anchorZ = feet.z + lz * 3.0;
+            // 模型默认面朝 +Z；转到面朝玩家（即朝向 -look 方向）
+            this.anchorYaw = (float) Math.atan2(-lx, -lz);
+            this.testState = GeometryRenderState.coloredCube(this.anchorX, this.anchorY, this.anchorZ);
             this.anchoredFor = player;
+        }
+        ModelInstance m = this.model;
+        if (m != null) {
+            float seconds = (System.nanoTime() - startNanos) / 1_000_000_000f;
+            this.modelState = m.build(this.anchorX, this.anchorY, this.anchorZ, this.anchorYaw, 1f, seconds);
         }
     }
 
@@ -117,7 +164,10 @@ public final class TacticalRenderer {
 
     private void prepare(LevelTerrainRenderContext context) {
         this.pendingDraw = null;
-        GeometryRenderState s = this.externalState != null ? this.externalState : this.testState;
+        GeometryRenderState s = this.externalState;
+        if (s == null) {
+            s = this.modelState != null ? this.modelState : this.testState;
+        }
         if (s == null || s.triangleCount() == 0) {
             return;
         }
