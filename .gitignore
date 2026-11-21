@@ -7,3 +7,7 @@ run/
 
 # WorkBuddy 本地工作区数据（记忆/配置），不进入版本库
 .workbuddy/
+
+# Mojang 源码参考导出（不要提交到公开仓库）
+reference-dump/
+reference-dump.zip
