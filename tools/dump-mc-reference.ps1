@@ -73,7 +73,65 @@ Write-Host ("Exported: {0} Java source files, {1} shader files" -f $javaCount, $
 foreach ($k in ($found.Keys | Sort-Object)) { Write-Host ("  " + $k) }
 
 if ($javaCount -eq 0) {
-    Write-Host 'No Java sources found. Run  .\gradlew.bat genSources  (takes a few minutes), then run this script again.' -ForegroundColor Yellow
+    Write-Host 'No Java sources found (that is fine, using javap signatures instead).' -ForegroundColor Yellow
+}
+
+# ---- signature dump with javap (works without genSources) ----
+$classLeaves = @(
+    'RenderPipelines', 'BindGroupLayouts', 'DefaultVertexFormat', 'VertexFormat', 'VertexFormatElement',
+    'VertexConsumer', 'RenderPass', 'CommandEncoder', 'GpuDevice', 'GpuTexture', 'GpuTextureView',
+    'GpuSampler', 'GpuBuffer', 'GpuBufferSlice', 'BindGroupLayout', 'BindGroup', 'RenderPipeline',
+    'TextureFormat', 'GpuFormat', 'SamplerCache', 'RenderSystem', 'DynamicTexture', 'AbstractTexture',
+    'TextureManager', 'NativeImage', 'DynamicUniforms', 'OverlayTexture', 'LightTexture',
+    'RenderTypes', 'RenderType', 'TextureSetup'
+)
+$classMap = @{}
+$jarOf = @{}
+foreach ($jar in $jars) {
+    try { $zip = [System.IO.Compression.ZipFile]::OpenRead($jar.FullName) } catch { continue }
+    try {
+        foreach ($e in $zip.Entries) {
+            $n = $e.FullName
+            if ($n -notmatch '\.class$') { continue }
+            if ($n -notmatch '^(net/minecraft/client/renderer|net/minecraft/client/renderer/texture|com/mojang/renderpearl|com/mojang/blaze3d)/') { continue }
+            $leaf = [System.IO.Path]::GetFileNameWithoutExtension($n)
+            $outer = $leaf.Split('$')[0]
+            if ($classLeaves -contains $outer) {
+                $fqn = $n.Substring(0, $n.Length - 6).Replace('/', '.')
+                if (-not $classMap.ContainsKey($fqn)) {
+                    $classMap[$fqn] = $jar.FullName
+                    $jarOf[$jar.FullName] = $true
+                }
+            }
+        }
+    } finally {
+        $zip.Dispose()
+    }
+}
+Write-Host ("Found {0} classes to describe with javap" -f $classMap.Count)
+
+$javap = $null
+$cmd = Get-Command javap -ErrorAction SilentlyContinue
+if ($cmd) { $javap = $cmd.Source }
+if (-not $javap -and $env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\javap.exe'))) {
+    $javap = Join-Path $env:JAVA_HOME 'bin\javap.exe'
+}
+if (-not $javap) {
+    $cands = @()
+    $cands += Get-ChildItem (Join-Path $env:USERPROFILE '.jdks') -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'bin\javap.exe' }
+    $cands += Get-ChildItem 'C:\Program Files\Java' -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'bin\javap.exe' }
+    $javap = $cands | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+
+if ($javap -and $classMap.Count -gt 0) {
+    $cp = ($jarOf.Keys -join ';')
+    $sigFile = Join-Path $out 'signatures.txt'
+    $names = $classMap.Keys | Sort-Object
+    $lines = & $javap -p -classpath $cp @names 2>&1
+    $lines | Out-File -FilePath $sigFile -Encoding utf8
+    Write-Host ("Wrote signatures for {0} classes to {1}" -f $names.Count, $sigFile) -ForegroundColor Green
+} else {
+    Write-Host 'javap not found (install/locate a JDK) or no classes matched - signatures.txt was not created.' -ForegroundColor Yellow
 }
 if ($shaderCount -eq 0) {
     Write-Host 'No vanilla shaders found.' -ForegroundColor Yellow
