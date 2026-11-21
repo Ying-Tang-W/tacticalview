@@ -1,9 +1,12 @@
 package tacticalview.fabric.render;
 
+import java.util.Optional;
+
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
@@ -16,6 +19,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.StagedVertexBuffer;
 import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.Vec3;
 
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
@@ -36,11 +40,16 @@ public final class TacticalRenderer {
     private static final TacticalRenderer INSTANCE = new TacticalRenderer();
 
     /**
-     * 原版的带深度测试的纯色填充管线（官方文档说明它不会穿墙）。
-     * 第一版用自建的 DEBUG_FILLED_SNIPPET 管线实测没有深度测试，远处的面会透过近处的面显示，
-     * 所以改用原版这条。后面做 PBR 时再注册我们自己的着色器管线。
+     * 纯色填充管线，明确指定 DepthStencilState.DEFAULT（深度测试 + 深度写入）。
+     * 实测：直接用 DEBUG_FILLED_SNIPPET 或原版 DEBUG_FILLED_BOX 时，立方体背面会透过近处的面显示，
+     * 说明它们没有"深度写入"，同一个模型自己的面之间无法互相遮挡。
+     * 后面做 PBR 时再换成我们自己的着色器管线，深度状态沿用这里的设置。
      */
-    private static final RenderPipeline PIPELINE = RenderPipelines.DEBUG_FILLED_BOX;
+    private static final RenderPipeline PIPELINE = RenderPipelines.register(
+            RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath(TacticalViewClient.MOD_ID, "pipeline/geometry_filled_depth"))
+                    .withDepthStencilState(Optional.of(DepthStencilState.DEFAULT))
+                    .build());
 
     private static final StagedVertexBuffer STAGED_BUFFER =
             new StagedVertexBuffer(() -> "TacticalView Geometry Buffer", RenderType.SMALL_BUFFER_SIZE);
