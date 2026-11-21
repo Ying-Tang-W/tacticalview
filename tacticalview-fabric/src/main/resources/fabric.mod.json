@@ -12,6 +12,12 @@
       "tacticalview.fabric.TacticalViewClient"
     ]
   },
+  "mixins": [
+    {
+      "config": "tacticalview.client.mixins.json",
+      "environment": "client"
+    }
+  ],
   "depends": {
     "fabricloader": ">=0.20.1",
     "minecraft": "~26.3",

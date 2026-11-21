@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tacticalview.core.event.EventBus;
 import tacticalview.core.lod.LodSelector;
+import tacticalview.fabric.render.TacticalRenderer;
 
 /** 客户端入口。阶段 2 起在这里注册资源加载、实体渲染器、调试面板。 */
 public class TacticalViewClient implements ClientModInitializer {
@@ -19,5 +20,8 @@ public class TacticalViewClient implements ClientModInitializer {
         // 冒烟检查：确认纯 Java 核心已经一起编进来并能运行
         LodSelector lod = new LodSelector(new float[] {8f, 24f}, 0.1f);
         LOGGER.info("TacticalView client initialized (core OK, {} LOD levels)", lod.levelCount());
+
+        // 渲染闭环：进入世界后，玩家前方 3 格会出现一个六色测试立方体
+        TacticalRenderer.init();
     }
 }
