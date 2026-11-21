@@ -1,0 +1,21 @@
+pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'tacticalview'
+
+// 纯 Java 引擎核心（无 Minecraft 依赖，自带自测）
+include 'tacticalview-core'
+
+// Fabric 核心模组（仅客户端）：适配层 + 渲染；复用 tacticalview-core 的源码
+include 'tacticalview-fabric'
+
+// 资产包模组：以后再加
+// include 'tacticalview-content'

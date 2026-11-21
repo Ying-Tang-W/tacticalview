@@ -1,0 +1,32 @@
+{
+  "id": "operator_example",
+  "scale": 1.0,
+  "offset": [0, 0, 0],
+  "yawOffsetDeg": 0,
+
+  "lods": [
+    { "model": "operator_example_lod0.glb", "maxDistance": 8 },
+    { "model": "operator_example_lod1.glb", "maxDistance": 24 },
+    { "model": "operator_example_lod2.glb" }
+  ],
+
+  "sockets": [
+    { "name": "muzzle",     "bone": "RightHand", "position": [0, 0.08, 0.62], "effect": "muzzle_flash" },
+    { "name": "ejection",   "bone": "RightHand", "position": [0.04, 0.10, 0.22], "effect": "shell_eject" },
+    { "name": "mag",        "bone": "LeftHand",  "position": [0, 0.02, 0.05] }
+  ],
+
+  "animations": {
+    "idle": "Rifle_Idle",
+    "walk": "Rifle_Walk",
+    "fire": "Rifle_Fire",
+    "reload": "Rifle_Reload"
+  },
+
+  "firstPerson": {
+    "offset": [0.18, -0.22, 0.35],
+    "rotationDeg": [0, 0, 0],
+    "scale": 1.0,
+    "aimOffset": [-0.18, 0.02, 0.05]
+  }
+}

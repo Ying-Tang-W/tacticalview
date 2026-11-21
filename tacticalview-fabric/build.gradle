@@ -1,0 +1,71 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = 'tacticalview'
+}
+
+// 客户端代码（渲染、着色器、输入）放 src/client，和 main 分开，保证服务端永远不会加载到它们
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        tacticalview {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+// 暂时直接把纯 Java 核心的源码编进本模组（不依赖 jar-in-jar），核心库保持零依赖
+sourceSets {
+    main {
+        java {
+            srcDir '../tacticalview-core/src/main/java'
+        }
+    }
+}
+
+repositories {
+    // 需要额外仓库时加在这里
+}
+
+dependencies {
+    // 26.x 起 Minecraft 不再混淆：没有 mappings，依赖直接用 implementation
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+def modVersion = project.version.toString()
+def archivesNameValue = 'tacticalview'
+
+processResources {
+    inputs.property 'version', modVersion
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': modVersion
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+    inputs.property 'archivesName', archivesNameValue
+
+    from('../LICENSE') {
+        rename { "${it}_${archivesNameValue}" }
+    }
+}

@@ -1,0 +1,28 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'tacticalview'
+version = '0.1.0'
+
+java {
+    // Minecraft 26.x 要求 Java 25；纯核心库用 Java 21 语法即可（record 等），两边都能编译
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenCentral()
+}
+
+// 核心库刻意保持零依赖，自测不依赖 JUnit，离线也能跑：gradle selfTest
+tasks.register('selfTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs the dependency-free self test.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'tacticalview.core.SelfTest'
+}
+
+tasks.named('check') {
+    dependsOn 'selfTest'
+}
