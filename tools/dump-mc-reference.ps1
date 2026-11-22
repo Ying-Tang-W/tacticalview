@@ -24,6 +24,9 @@ $jars = @()
 foreach ($r in $roots) {
     $jars += Get-ChildItem $r -Recurse -Filter *.jar -ErrorAction SilentlyContinue
 }
+# Only use jars from the 26.3 build when any exist (older MC versions have incompatible classes)
+$only263 = @($jars | Where-Object { $_.FullName -match '26[._]3' })
+if ($only263.Count -gt 0) { $jars = $only263; Write-Host ("Restricted to {0} jars matching 26.3" -f $only263.Count) }
 # jars with "sources" in the name first, so source files win over anything else
 $jars = $jars | Sort-Object { if ($_.Name -match 'sources') { 0 } else { 1 } }
 
@@ -83,7 +86,11 @@ $classLeaves = @(
     'GpuSampler', 'GpuBuffer', 'GpuBufferSlice', 'BindGroupLayout', 'BindGroup', 'RenderPipeline',
     'TextureFormat', 'GpuFormat', 'SamplerCache', 'RenderSystem', 'DynamicTexture', 'AbstractTexture',
     'TextureManager', 'NativeImage', 'DynamicUniforms', 'OverlayTexture', 'LightTexture',
-    'RenderTypes', 'RenderType', 'TextureSetup'
+    'RenderTypes', 'RenderType', 'TextureSetup',
+    'UniformType', 'AddressMode', 'FilterMode', 'IndexType', 'CompiledRenderPipeline', 'ShaderType',
+    'DepthStencilState', 'CompareOp', 'PrimitiveTopology', 'ColorTargetState', 'BlendFunction',
+    'BlendEquation', 'StagedVertexBuffer', 'Lightmap', 'LightmapRenderStateExtractor',
+    'GameRenderer', 'Minecraft', 'ShaderDefines', 'BindGroupLayoutEntry', 'GlobalSettingsUniform'
 )
 $classMap = @{}
 $jarOf = @{}
@@ -93,7 +100,7 @@ foreach ($jar in $jars) {
         foreach ($e in $zip.Entries) {
             $n = $e.FullName
             if ($n -notmatch '\.class$') { continue }
-            if ($n -notmatch '^(net/minecraft/client/renderer|net/minecraft/client/renderer/texture|com/mojang/renderpearl|com/mojang/blaze3d)/') { continue }
+            if ($n -notmatch '^(net/minecraft/client|com/mojang/renderpearl|com/mojang/blaze3d)/') { continue }
             $leaf = [System.IO.Path]::GetFileNameWithoutExtension($n)
             $outer = $leaf.Split('$')[0]
             if ($classLeaves -contains $outer) {
@@ -127,6 +134,8 @@ if ($javap -and $classMap.Count -gt 0) {
     $cp = ($jarOf.Keys -join ';')
     $sigFile = Join-Path $out 'signatures.txt'
     $names = $classMap.Keys | Sort-Object
+    $jarList = $jarOf.Keys | Sort-Object
+    $jarList | Out-File -FilePath (Join-Path $out 'jars-used.txt') -Encoding utf8
     $lines = & $javap -p -classpath $cp @names 2>&1
     $lines | Out-File -FilePath $sigFile -Encoding utf8
     Write-Host ("Wrote signatures for {0} classes to {1}" -f $names.Count, $sigFile) -ForegroundColor Green
