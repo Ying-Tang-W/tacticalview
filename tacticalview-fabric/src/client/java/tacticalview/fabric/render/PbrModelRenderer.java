@@ -18,6 +18,9 @@ import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
 import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.IndexType;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
@@ -86,6 +89,22 @@ public final class PbrModelRenderer {
                     .withCull(false)
                     .build());
 
+    /** 半透明版本：标准 alpha 混合，深度只测试不写入（先画不透明部分，再画它）。 */
+    private static final RenderPipeline PIPELINE_BLEND = RenderPipelines.register(
+            RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath(TacticalViewClient.MOD_ID, "pipeline/pbr_static_blend"))
+                    .withVertexShader(SHADER)
+                    .withFragmentShader(SHADER)
+                    .withVertexBinding(0, FORMAT)
+                    .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                    .withBindGroupLayout(BindGroupLayouts.FOG)
+                    .withBindGroupLayout(BindGroupLayouts.LIGHTING)
+                    .withBindGroupLayout(TEXTURES)
+                    .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
+                    .withDepthStencilState(Optional.of(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, false)))
+                    .withCull(false)
+                    .build());
+
     private static final PbrModelRenderer INSTANCE = new PbrModelRenderer();
 
     public static PbrModelRenderer getInstance() {
@@ -96,6 +115,7 @@ public final class PbrModelRenderer {
     private static final class Part {
         final StaticMesh mesh;
         final Vector3f factors = new Vector3f();
+        boolean blend;
         GpuBuffer vertexBuffer, indexBuffer;
         GpuTextureView baseColor, metalRough, normal, emissive;
 
@@ -137,10 +157,20 @@ public final class PbrModelRenderer {
                 this.gltf = g;
                 this.spec = sp;
                 int tris = 0;
+                java.util.Map<Integer, Boolean> partialCache = new java.util.HashMap<>();
                 for (StaticMesh m : baked) {
-                    parts.add(new Part(m));
+                    Part part = new Part(m);
+                    if (m.material >= 0 && m.material < g.materials.size()) {
+                        GltfModel.Material mat = g.materials.get(m.material);
+                        if ("BLEND".equals(mat.alphaMode) && mat.baseColorImage >= 0) {
+                            part.blend = partialCache.computeIfAbsent(mat.baseColorImage, i -> hasPartialAlpha(g, i));
+                        }
+                    }
+                    parts.add(part);
                     tris += m.triangleCount();
                 }
+                // 不透明部分在前，半透明在后
+                parts.sort(java.util.Comparator.comparing((Part pt) -> pt.blend));
                 TacticalViewClient.LOGGER.info("PBR model {} baked: {} parts, {} triangles", sp.path(), parts.size(), tris);
                 return;
             } catch (Exception e) {
@@ -149,6 +179,27 @@ public final class PbrModelRenderer {
             }
         }
         TacticalViewClient.LOGGER.info("No PBR model found (put wangzhaojun.glb or kurong_pbr.glb into src/client/resources/assets/tacticalview/models/)");
+    }
+
+    /** BLEND 材质的贴图里是否真有"半透明"像素（>2% 的像素 alpha 在 10..245 之间）；否则当作镂空处理。 */
+    private static boolean hasPartialAlpha(GltfModel g, int imageIndex) {
+        try {
+            byte[] data = g.images.get(imageIndex).data;
+            BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(data));
+            if (img == null || !img.getColorModel().hasAlpha()) {
+                return false;
+            }
+            long partial = 0, total = (long) img.getWidth() * img.getHeight();
+            for (int y = 0; y < img.getHeight(); y++) {
+                for (int x = 0; x < img.getWidth(); x++) {
+                    int a = img.getRGB(x, y) >>> 24;
+                    if (a >= 10 && a <= 245) partial++;
+                }
+            }
+            return partial > total / 50;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public boolean hasModel() {
@@ -192,7 +243,7 @@ public final class PbrModelRenderer {
                 GltfModel.Material mat = (mi >= 0 && mi < gltf.materials.size()) ? gltf.materials.get(mi) : new GltfModel.Material();
                 boolean hasMr = mat.metallicRoughnessImage >= 0;
                 // 没有金属度/粗糙度贴图时，glTF 默认的 metallic=1 会让整件东西变成黑色金属，改用非金属的保守值
-                part.factors.set(hasMr ? mat.metallic : 0f, hasMr ? mat.roughness : 0.7f, 0f);
+                part.factors.set(hasMr ? mat.metallic : 0f, hasMr ? mat.roughness : 0.7f, part.blend ? 1f : 0f);
                 part.baseColor = texture(device, encoder, mat.baseColorImage, 255, 255, 255);
                 part.metalRough = texture(device, encoder, mat.metallicRoughnessImage, 255, 255, 255);
                 part.normal = texture(device, encoder, mat.normalImage, 128, 128, 255);
@@ -276,9 +327,15 @@ public final class PbrModelRenderer {
         GpuSampler clamp = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
 
         pass.pushDebugGroup(() -> "TacticalView PBR");
+        boolean currentBlend = false;
         pass.setPipeline(RenderSystem.getCompiledPipeline(PIPELINE));
         RenderSystem.bindDefaultUniforms(pass);
         for (Part part : parts) {
+            if (part.blend != currentBlend) {
+                currentBlend = part.blend;
+                pass.setPipeline(RenderSystem.getCompiledPipeline(currentBlend ? PIPELINE_BLEND : PIPELINE));
+                RenderSystem.bindDefaultUniforms(pass);
+            }
             GpuBufferSlice dyn = RenderSystem.getDynamicUniforms().writeTransform(mv, colorModulator, part.factors, textureMatrix);
             pass.setUniform("DynamicTransforms", dyn);
             pass.setUniform("TvBaseColor", part.baseColor, linear);

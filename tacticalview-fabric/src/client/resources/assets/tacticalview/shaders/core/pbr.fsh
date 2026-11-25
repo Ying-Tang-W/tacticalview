@@ -23,6 +23,7 @@ layout(location = 0) out vec4 fragColor;
 // 约定（借用原版 DynamicTransforms 里现成的两个槽位，不用额外声明 uniform）：
 //   ColorModulator.xy = 方块光 / 天空光 (0..1)
 //   ModelOffset.xy    = glTF 材质的 metallicFactor / roughnessFactor
+//   ModelOffset.z     = 1 表示半透明（alpha 混合），0 表示不透明/镂空
 const float PI = 3.14159265359;
 
 vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
@@ -60,7 +61,8 @@ vec3 shadeLight(vec3 L, vec3 N, vec3 V, vec3 albedo, float metallic, float rough
 
 void main() {
     vec4 base = texture(TvBaseColor, texCoord0);
-    if (base.a < 0.5) {
+    bool blendMode = ModelOffset.z > 0.5;
+    if (!blendMode && base.a < 0.5) {
         discard; // 头发/睫毛等镂空部分
     }
     vec3 albedo = toLinear(base.rgb);
@@ -97,7 +99,7 @@ void main() {
 
     // 简单色调映射并回到显示空间（原版帧缓冲不是线性的）
     color = color / (color + vec3(1.0)) * 1.15;
-    vec4 outColor = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+    vec4 outColor = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), blendMode ? base.a : 1.0);
     fragColor = apply_fog(outColor, sphericalVertexDistance, cylindricalVertexDistance,
             FogEnvironmentalStart, FogEnvironmentalEnd, FogRenderDistanceStart, FogRenderDistanceEnd, FogColor);
 }

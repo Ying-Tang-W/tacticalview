@@ -65,6 +65,8 @@ public final class GltfModel {
         public float metallic = 1f;
         public float roughness = 1f;
         public float[] emissive = {0, 0, 0};
+        /** OPAQUE / MASK / BLEND（glTF alphaMode）。 */
+        public String alphaMode = "OPAQUE";
         /** 纹理对应的 Image 下标，-1 表示没有。 */
         public int baseColorImage = -1;
         public int normalImage = -1;

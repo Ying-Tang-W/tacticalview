@@ -289,6 +289,7 @@ public final class GltfLoader {
                 mat.baseColorImage = textureImage(Json.obj(pbr.get("baseColorTexture")), textures);
                 mat.metallicRoughnessImage = textureImage(Json.obj(pbr.get("metallicRoughnessTexture")), textures);
             }
+            mat.alphaMode = Json.str(m, "alphaMode", "OPAQUE");
             mat.emissive = Json.floats(m, "emissiveFactor", mat.emissive);
             mat.normalImage = textureImage(Json.obj(m.get("normalTexture")), textures);
             mat.occlusionImage = textureImage(Json.obj(m.get("occlusionTexture")), textures);
