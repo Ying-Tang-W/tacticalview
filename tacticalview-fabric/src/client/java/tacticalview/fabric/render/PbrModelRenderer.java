@@ -206,6 +206,10 @@ public final class PbrModelRenderer {
 
     /** 在 prepare 阶段调用：算出相机相对的模型矩阵。 */
     public void prepare(double camX, double camY, double camZ) {
+        // GPU 上传必须在任何渲染通道之外进行，所以放在这里而不是 draw()
+        if (visible) {
+            ensureUploaded();
+        }
         modelMatrix.identity()
                 .translate((float) (anchorX - camX), (float) (anchorY - camY), (float) (anchorZ - camZ))
                 .rotateY(yaw);
@@ -215,7 +219,6 @@ public final class PbrModelRenderer {
         if (!visible) {
             return;
         }
-        ensureUploaded();
         if (!uploaded) {
             return;
         }
