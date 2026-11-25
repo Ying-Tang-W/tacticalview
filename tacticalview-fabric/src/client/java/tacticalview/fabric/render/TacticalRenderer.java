@@ -89,6 +89,7 @@ public final class TacticalRenderer {
 
     public static void init() {
         INSTANCE.loadTestModel();
+        PbrModelRenderer.getInstance().load();
         LevelExtractionEvents.END_EXTRACTION.register(INSTANCE::extract);
         LevelRenderEvents.BEFORE_RENDER_PASS.register(INSTANCE::prepare);
         LevelRenderEvents.END_MAIN.register(_ -> STAGED_BUFFER.endFrame());
@@ -130,6 +131,7 @@ public final class TacticalRenderer {
             this.anchoredFor = null;
             this.testState = null;
             this.modelState = null;
+            PbrModelRenderer.getInstance().hide();
             return;
         }
         if (this.anchoredFor != player) {
@@ -153,6 +155,11 @@ public final class TacticalRenderer {
             this.testState = GeometryRenderState.coloredCube(this.anchorX, this.anchorY, this.anchorZ);
             this.anchoredFor = player;
         }
+        // 刀放在测试人偶右侧 1.2 格、离地 1.8 格处，缓慢自转，方便从各个角度看材质
+        float seconds0 = (System.nanoTime() - startNanos) / 1_000_000_000f;
+        double rightX = Math.cos(this.anchorYaw), rightZ = -Math.sin(this.anchorYaw);
+        PbrModelRenderer.getInstance().place(this.anchorX + rightX * 1.2, this.anchorY + 1.8,
+                this.anchorZ + rightZ * 1.2, seconds0 * 0.6f);
         ModelInstance m = this.model;
         if (m != null) {
             float seconds = (System.nanoTime() - startNanos) / 1_000_000_000f;
@@ -187,6 +194,7 @@ public final class TacticalRenderer {
                 topology == PrimitiveTopology.QUADS ? RenderSystem.getProjectionType().vertexSorting() : null);
 
         Vec3 camera = context.levelState().cameraRenderState.pos;
+        PbrModelRenderer.getInstance().prepare(camera.x, camera.y, camera.z);
         Matrix4f matrix = new Matrix4f().translate(
                 (float) (s.anchorX() - camera.x),
                 (float) (s.anchorY() - camera.y),
@@ -225,6 +233,7 @@ public final class TacticalRenderer {
 
     /** 由 LevelRendererMixin 在半透明地形绘制之后调用，renderPass 是主场景的渲染通道。 */
     public void draw(RenderPass renderPass) {
+        PbrModelRenderer.getInstance().draw(renderPass);
         StagedVertexBuffer.Draw draw = this.pendingDraw;
         if (draw == null) {
             return;
@@ -248,6 +257,7 @@ public final class TacticalRenderer {
 
     /** 由 GameRendererMixin 在渲染器关闭时调用。 */
     public static void close() {
+        PbrModelRenderer.getInstance().close();
         STAGED_BUFFER.close();
     }
 }

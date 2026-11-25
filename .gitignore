@@ -11,3 +11,6 @@ run/
 # Mojang 源码参考导出（不要提交到公开仓库）
 reference-dump/
 reference-dump.zip
+# third-party model used for local testing; never commit
+tacticalview-fabric/src/client/resources/assets/tacticalview/models/kurong_pbr.glb
+*.glb.local
