@@ -53,7 +53,7 @@ public final class PbrModelRenderer {
     private record Spec(String path, List<String> include, float scale, float yOffset, boolean spin) {}
 
     private static final List<Spec> SPECS = List.of(
-            new Spec("/assets/tacticalview/models/wangzhaojun.glb", null, 0.9f, 0f, false),
+            new Spec("/assets/tacticalview/models/wangzhaojun.glb", null, 1.35f, 0f, false),
             new Spec("/assets/tacticalview/models/kurong_pbr.glb", List.of("obj_model_01"), 1f, 1.8f, true));
 
     /** pos(3f) normal(3f) uv(2f) tangent(4f) = 48 字节 */
