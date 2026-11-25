@@ -20,7 +20,6 @@ import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
-import com.mojang.renderpearl.api.pipeline.CompareOp;
 import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.IndexType;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
@@ -89,7 +88,7 @@ public final class PbrModelRenderer {
                     .withCull(false)
                     .build());
 
-    /** 半透明版本：标准 alpha 混合，深度只测试不写入（先画不透明部分，再画它）。 */
+    /** 半透明版本：标准 alpha 混合，写入深度（否则会被之后绘制的天空等盖掉；先画不透明部分，再画它）。 */
     private static final RenderPipeline PIPELINE_BLEND = RenderPipelines.register(
             RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
                     .withLocation(Identifier.fromNamespaceAndPath(TacticalViewClient.MOD_ID, "pipeline/pbr_static_blend"))
@@ -101,7 +100,7 @@ public final class PbrModelRenderer {
                     .withBindGroupLayout(BindGroupLayouts.LIGHTING)
                     .withBindGroupLayout(TEXTURES)
                     .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
-                    .withDepthStencilState(Optional.of(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, false)))
+                    .withDepthStencilState(Optional.of(DepthStencilState.DEFAULT))
                     .withCull(false)
                     .build());
 
