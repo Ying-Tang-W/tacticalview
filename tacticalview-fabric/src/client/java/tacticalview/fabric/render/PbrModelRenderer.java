@@ -47,8 +47,12 @@ import tacticalview.fabric.TacticalViewClient;
  * 材质贴图：baseColor / metallicRoughness / normal / emissive；原版光照贴图做环境光。
  */
 public final class PbrModelRenderer {
-    private static final String MODEL_PATH = "/assets/tacticalview/models/kurong_pbr.glb";
-    private static final List<String> INCLUDE = List.of("obj_model_01");
+    /** 模型候选，按顺序取第一个存在的：路径、只取名字含这些子串的节点、缩放、离地高度、是否自转。 */
+    private record Spec(String path, List<String> include, float scale, float yOffset, boolean spin) {}
+
+    private static final List<Spec> SPECS = List.of(
+            new Spec("/assets/tacticalview/models/wangzhaojun.glb", null, 0.9f, 0f, false),
+            new Spec("/assets/tacticalview/models/kurong_pbr.glb", List.of("obj_model_01"), 1f, 1.8f, true));
 
     /** pos(3f) normal(3f) uv(2f) tangent(4f) = 48 字节 */
     private static final VertexFormat FORMAT = VertexFormat.builder(0)
@@ -88,12 +92,24 @@ public final class PbrModelRenderer {
         return INSTANCE;
     }
 
+    /** 一个材质对应一个部件。 */
+    private static final class Part {
+        final StaticMesh mesh;
+        final Vector3f factors = new Vector3f();
+        GpuBuffer vertexBuffer, indexBuffer;
+        GpuTextureView baseColor, metalRough, normal, emissive;
+
+        Part(StaticMesh mesh) {
+            this.mesh = mesh;
+        }
+    }
+
     // 资源（渲染线程里延迟创建）
-    private StaticMesh mesh;
     private GltfModel gltf;
-    private GpuBuffer vertexBuffer;
-    private GpuBuffer indexBuffer;
-    private GpuTextureView baseColor, metalRough, normal, emissive;
+    private Spec spec;
+    private final List<Part> parts = new java.util.ArrayList<>();
+    private final java.util.Map<Integer, GpuTextureView> viewByImage = new java.util.HashMap<>();
+    private final java.util.Map<String, GpuTextureView> solidViews = new java.util.HashMap<>();
     private final java.util.List<GpuTexture> ownedTextures = new java.util.ArrayList<>();
     private boolean uploaded;
     private boolean failed;
@@ -109,25 +125,34 @@ public final class PbrModelRenderer {
 
     private PbrModelRenderer() {}
 
-    /** 在客户端初始化时调用：只在 CPU 端读取并烘焙，GPU 资源等第一次绘制时再建。 */
+    /** 在客户端初始化时调用：只在 CPU 端读取并烘焙，GPU 资源等第一次绘制前再建。 */
     public void load() {
-        try (InputStream in = PbrModelRenderer.class.getResourceAsStream(MODEL_PATH)) {
-            if (in == null) {
-                TacticalViewClient.LOGGER.info("PBR model {} not present; skipping (put kurong_pbr.glb into src/client/resources/assets/tacticalview/models/)", MODEL_PATH);
+        for (Spec sp : SPECS) {
+            try (InputStream in = PbrModelRenderer.class.getResourceAsStream(sp.path())) {
+                if (in == null) {
+                    continue;
+                }
+                GltfModel g = GltfLoader.loadGlb(in.readAllBytes());
+                List<StaticMesh> baked = StaticMeshBaker.bakeByMaterial(g, sp.include());
+                this.gltf = g;
+                this.spec = sp;
+                int tris = 0;
+                for (StaticMesh m : baked) {
+                    parts.add(new Part(m));
+                    tris += m.triangleCount();
+                }
+                TacticalViewClient.LOGGER.info("PBR model {} baked: {} parts, {} triangles", sp.path(), parts.size(), tris);
                 return;
+            } catch (Exception e) {
+                TacticalViewClient.LOGGER.error("Failed to load PBR model " + sp.path(), e);
+                parts.clear();
             }
-            this.gltf = GltfLoader.loadGlb(in.readAllBytes());
-            this.mesh = StaticMeshBaker.bake(gltf, INCLUDE);
-            TacticalViewClient.LOGGER.info("PBR model baked: {} vertices, {} triangles, material {}",
-                    mesh.vertexCount(), mesh.triangleCount(), mesh.material);
-        } catch (Exception e) {
-            TacticalViewClient.LOGGER.error("Failed to load PBR model", e);
-            this.mesh = null;
         }
+        TacticalViewClient.LOGGER.info("No PBR model found (put wangzhaojun.glb or kurong_pbr.glb into src/client/resources/assets/tacticalview/models/)");
     }
 
     public boolean hasModel() {
-        return mesh != null && !failed;
+        return !parts.isEmpty() && !failed;
     }
 
     /** 提取阶段调用：设置模型在世界中的位置与朝向（世界坐标，脚下原点）。 */
@@ -152,37 +177,52 @@ public final class PbrModelRenderer {
         try {
             GpuDevice device = RenderSystem.getDevice();
             CommandEncoder encoder = device.createCommandEncoder();
+            for (Part part : parts) {
+                float[] inter = part.mesh.interleave();
+                ByteBuffer vb = ByteBuffer.allocateDirect(inter.length * 4).order(ByteOrder.nativeOrder());
+                vb.asFloatBuffer().put(inter);
+                part.vertexBuffer = device.createBuffer(() -> "TacticalView PBR vertices",
+                        GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, vb);
+                ByteBuffer ib = ByteBuffer.allocateDirect(part.mesh.indices.length * 4).order(ByteOrder.nativeOrder());
+                ib.asIntBuffer().put(part.mesh.indices);
+                part.indexBuffer = device.createBuffer(() -> "TacticalView PBR indices",
+                        GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_COPY_DST, ib);
 
-            float[] inter = mesh.interleave();
-            ByteBuffer vb = ByteBuffer.allocateDirect(inter.length * 4).order(ByteOrder.nativeOrder());
-            vb.asFloatBuffer().put(inter);
-            vertexBuffer = device.createBuffer(() -> "TacticalView PBR vertices",
-                    GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, vb);
-
-            ByteBuffer ib = ByteBuffer.allocateDirect(mesh.indices.length * 4).order(ByteOrder.nativeOrder());
-            ib.asIntBuffer().put(mesh.indices);
-            indexBuffer = device.createBuffer(() -> "TacticalView PBR indices",
-                    GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_COPY_DST, ib);
-
-            GltfModel.Material mat = (mesh.material >= 0 && mesh.material < gltf.materials.size())
-                    ? gltf.materials.get(mesh.material) : new GltfModel.Material();
-            materialFactors.set(mat.metallic, mat.roughness, 0f);
-            baseColor = texture(device, encoder, "base", mat.baseColorImage, 255, 255, 255);
-            metalRough = texture(device, encoder, "metalrough", mat.metallicRoughnessImage, 255, 255, 255);
-            normal = texture(device, encoder, "normal", mat.normalImage, 128, 128, 255);
-            emissive = texture(device, encoder, "emissive", mat.emissiveImage, 0, 0, 0);
+                int mi = part.mesh.material;
+                GltfModel.Material mat = (mi >= 0 && mi < gltf.materials.size()) ? gltf.materials.get(mi) : new GltfModel.Material();
+                boolean hasMr = mat.metallicRoughnessImage >= 0;
+                // 没有金属度/粗糙度贴图时，glTF 默认的 metallic=1 会让整件东西变成黑色金属，改用非金属的保守值
+                part.factors.set(hasMr ? mat.metallic : 0f, hasMr ? mat.roughness : 0.7f, 0f);
+                part.baseColor = texture(device, encoder, mat.baseColorImage, 255, 255, 255);
+                part.metalRough = texture(device, encoder, mat.metallicRoughnessImage, 255, 255, 255);
+                part.normal = texture(device, encoder, mat.normalImage, 128, 128, 255);
+                part.emissive = texture(device, encoder, mat.emissiveImage, 0, 0, 0);
+            }
             uploaded = true;
-            TacticalViewClient.LOGGER.info("PBR model uploaded to the GPU");
+            TacticalViewClient.LOGGER.info("PBR model uploaded to the GPU: {} parts, {} textures", parts.size(), ownedTextures.size());
         } catch (Throwable t) {
             failed = true;
             TacticalViewClient.LOGGER.error("Failed to upload PBR model; it will not be drawn", t);
         }
     }
 
-    private GpuTextureView texture(GpuDevice device, CommandEncoder encoder, String label, int imageIndex, int r, int g, int b)
+    /** 同一张图片只上传一次；没有图片时用 1x1 纯色贴图（同色共用）。 */
+    private GpuTextureView texture(GpuDevice device, CommandEncoder encoder, int imageIndex, int r, int g, int b)
             throws Exception {
+        boolean real = imageIndex >= 0 && imageIndex < gltf.images.size() && gltf.images.get(imageIndex).data != null;
+        if (real) {
+            GpuTextureView cached = viewByImage.get(imageIndex);
+            if (cached != null) {
+                return cached;
+            }
+        } else {
+            GpuTextureView cached = solidViews.get(r + "," + g + "," + b);
+            if (cached != null) {
+                return cached;
+            }
+        }
         byte[] png;
-        if (imageIndex >= 0 && imageIndex < gltf.images.size() && gltf.images.get(imageIndex).data != null) {
+        if (real) {
             png = gltf.images.get(imageIndex).data;
         } else {
             BufferedImage solid = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
@@ -192,13 +232,18 @@ public final class PbrModelRenderer {
             png = bos.toByteArray();
         }
         try (NativeImage image = NativeImage.read(png)) {
-            GpuTexture tex = device.createTexture(() -> "TacticalView " + label,
+            GpuTexture tex = device.createTexture(() -> "TacticalView image " + imageIndex,
                     GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST,
                     GpuFormat.RGBA8_UNORM, image.getWidth(), image.getHeight(), 1, 1);
             encoder.writeToTexture(tex, image);
             ownedTextures.add(tex);
-            TacticalViewClient.LOGGER.info("PBR texture '{}': {}x{}", label, image.getWidth(), image.getHeight());
-            return device.createTextureView(tex);
+            GpuTextureView view = device.createTextureView(tex);
+            if (real) {
+                viewByImage.put(imageIndex, view);
+            } else {
+                solidViews.put(r + "," + g + "," + b, view);
+            }
+            return view;
         }
     }
 
@@ -212,14 +257,12 @@ public final class PbrModelRenderer {
         }
         modelMatrix.identity()
                 .translate((float) (anchorX - camX), (float) (anchorY - camY), (float) (anchorZ - camZ))
-                .rotateY(yaw);
+                .rotateY(yaw)
+                .scale(spec != null ? spec.scale() : 1f);
     }
 
     public void draw(RenderPass pass) {
-        if (!visible) {
-            return;
-        }
-        if (!uploaded) {
+        if (!visible || !uploaded) {
             return;
         }
         GpuTextureView lightmap = Minecraft.getInstance().gameRenderer.levelLightmap();
@@ -229,33 +272,47 @@ public final class PbrModelRenderer {
         // 光照贴图坐标：x=方块光 y=天空光（先用白天户外的固定值，后面接世界亮度）
         colorModulator.set(0.0f, 1.0f, 0f, 1f);
         Matrix4f mv = new Matrix4f(RenderSystem.getModelViewMatrixCopy()).mul(modelMatrix);
-        GpuBufferSlice dyn = RenderSystem.getDynamicUniforms().writeTransform(mv, colorModulator, materialFactors, textureMatrix);
-
         GpuSampler linear = RenderSystem.getSamplerCache().getRepeat(FilterMode.LINEAR);
         GpuSampler clamp = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
 
         pass.pushDebugGroup(() -> "TacticalView PBR");
         pass.setPipeline(RenderSystem.getCompiledPipeline(PIPELINE));
         RenderSystem.bindDefaultUniforms(pass);
-        pass.setUniform("DynamicTransforms", dyn);
-        pass.setUniform("TvBaseColor", baseColor, linear);
-        pass.setUniform("TvMetalRough", metalRough, linear);
-        pass.setUniform("TvNormal", normal, linear);
-        pass.setUniform("TvEmissive", emissive, linear);
-        pass.setUniform("TvLightmap", lightmap, clamp);
-        pass.setVertexBuffer(0, vertexBuffer.slice());
-        pass.setIndexBuffer(indexBuffer, IndexType.INT);
-        pass.drawIndexed(mesh.indices.length, 1, 0, 0, 0);
+        for (Part part : parts) {
+            GpuBufferSlice dyn = RenderSystem.getDynamicUniforms().writeTransform(mv, colorModulator, part.factors, textureMatrix);
+            pass.setUniform("DynamicTransforms", dyn);
+            pass.setUniform("TvBaseColor", part.baseColor, linear);
+            pass.setUniform("TvMetalRough", part.metalRough, linear);
+            pass.setUniform("TvNormal", part.normal, linear);
+            pass.setUniform("TvEmissive", part.emissive, linear);
+            pass.setUniform("TvLightmap", lightmap, clamp);
+            pass.setVertexBuffer(0, part.vertexBuffer.slice());
+            pass.setIndexBuffer(part.indexBuffer, IndexType.INT);
+            pass.drawIndexed(part.mesh.indices.length, 1, 0, 0, 0);
+        }
         pass.popDebugGroup();
     }
 
+    /** 角色/道具相对锚点的离地高度与是否自转，由当前模型规格决定。 */
+    public float yOffset() {
+        return spec != null ? spec.yOffset() : 0f;
+    }
+
+    public boolean spins() {
+        return spec != null && spec.spin();
+    }
+
     public void close() {
-        if (vertexBuffer != null) vertexBuffer.close();
-        if (indexBuffer != null) indexBuffer.close();
+        for (Part part : parts) {
+            if (part.vertexBuffer != null) part.vertexBuffer.close();
+            if (part.indexBuffer != null) part.indexBuffer.close();
+            part.vertexBuffer = null;
+            part.indexBuffer = null;
+        }
         for (GpuTexture t : ownedTextures) t.close();
         ownedTextures.clear();
+        viewByImage.clear();
+        solidViews.clear();
         uploaded = false;
-        vertexBuffer = null;
-        indexBuffer = null;
     }
 }

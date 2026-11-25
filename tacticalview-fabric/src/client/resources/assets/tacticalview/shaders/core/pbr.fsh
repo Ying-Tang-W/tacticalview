@@ -60,6 +60,9 @@ vec3 shadeLight(vec3 L, vec3 N, vec3 V, vec3 albedo, float metallic, float rough
 
 void main() {
     vec4 base = texture(TvBaseColor, texCoord0);
+    if (base.a < 0.5) {
+        discard; // 头发/睫毛等镂空部分
+    }
     vec3 albedo = toLinear(base.rgb);
     vec4 mr = texture(TvMetalRough, texCoord0);
     float roughness = clamp(mr.g * ModelOffset.y, 0.04, 1.0);

@@ -158,7 +158,9 @@ public final class TacticalRenderer {
         // 刀放在测试人偶右侧 1.2 格、离地 1.8 格处，缓慢自转，方便从各个角度看材质
         float seconds0 = (System.nanoTime() - startNanos) / 1_000_000_000f;
         double rightX = Math.cos(this.anchorYaw), rightZ = -Math.sin(this.anchorYaw);
-        PbrModelRenderer.getInstance().place(this.anchorX, this.anchorY + 1.8, this.anchorZ, seconds0 * 0.6f);
+        PbrModelRenderer pbr = PbrModelRenderer.getInstance();
+        pbr.place(this.anchorX, this.anchorY + pbr.yOffset(), this.anchorZ,
+                pbr.spins() ? seconds0 * 0.6f : this.anchorYaw);
         ModelInstance m = this.model;
         if (m != null) {
             float seconds = (System.nanoTime() - startNanos) / 1_000_000_000f;

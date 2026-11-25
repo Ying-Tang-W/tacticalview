@@ -14,12 +14,40 @@ import tacticalview.core.math.Mat4;
 public final class StaticMeshBaker {
     private StaticMeshBaker() {}
 
+    /** 按材质拆成多份网格（每份一个材质），用于多材质的角色/道具。 */
+    public static List<StaticMesh> bakeByMaterial(GltfModel model, List<String> include) {
+        List<Integer> mats = new ArrayList<>();
+        for (int ni = 0; ni < model.nodes.size(); ni++) {
+            GltfModel.Node node = model.nodes.get(ni);
+            if (node.mesh < 0 || !matches(node.name, include)) {
+                continue;
+            }
+            for (GltfModel.Primitive p : model.meshes.get(node.mesh).primitives) {
+                if (p.indices.length > 0 && !mats.contains(p.material)) {
+                    mats.add(p.material);
+                }
+            }
+        }
+        List<StaticMesh> out = new ArrayList<>();
+        for (int m : mats) {
+            out.add(bake0(model, include, m));
+        }
+        if (out.isEmpty()) {
+            throw new IllegalArgumentException("No static mesh found" + (include != null ? " for " + include : ""));
+        }
+        return out;
+    }
+
     public static StaticMesh bake(GltfModel model, List<String> include) {
+        return bake0(model, include, -2);
+    }
+
+    private static StaticMesh bake0(GltfModel model, List<String> include, int forcedMaterial) {
         List<float[]> pos = new ArrayList<>();
         List<float[]> nor = new ArrayList<>();
         List<float[]> uv = new ArrayList<>();
         List<int[]> idx = new ArrayList<>();
-        int material = -2;
+        int material = forcedMaterial;
         int total = 0;
         for (int ni = 0; ni < model.nodes.size(); ni++) {
             GltfModel.Node node = model.nodes.get(ni);
@@ -35,7 +63,7 @@ public final class StaticMeshBaker {
                 if (material == -2) {
                     material = p.material;
                 } else if (material != p.material) {
-                    model.warnings.add("StaticMeshBaker: skipped a primitive with a different material (" + p.material + ")");
+                    if (forcedMaterial == -2) model.warnings.add("StaticMeshBaker: skipped a primitive with a different material (" + p.material + ")");
                     continue;
                 }
                 int n = p.vertexCount();
