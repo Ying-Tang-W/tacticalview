@@ -158,8 +158,7 @@ public final class TacticalRenderer {
         // 刀放在测试人偶右侧 1.2 格、离地 1.8 格处，缓慢自转，方便从各个角度看材质
         float seconds0 = (System.nanoTime() - startNanos) / 1_000_000_000f;
         double rightX = Math.cos(this.anchorYaw), rightZ = -Math.sin(this.anchorYaw);
-        PbrModelRenderer.getInstance().place(this.anchorX + rightX * 1.2, this.anchorY + 1.8,
-                this.anchorZ + rightZ * 1.2, seconds0 * 0.6f);
+        PbrModelRenderer.getInstance().place(this.anchorX, this.anchorY + 1.8, this.anchorZ, seconds0 * 0.6f);
         ModelInstance m = this.model;
         if (m != null) {
             float seconds = (System.nanoTime() - startNanos) / 1_000_000_000f;
@@ -171,9 +170,14 @@ public final class TacticalRenderer {
 
     private void prepare(LevelTerrainRenderContext context) {
         this.pendingDraw = null;
+        Vec3 cam = context.levelState().cameraRenderState.pos;
+        PbrModelRenderer.getInstance().prepare(cam.x, cam.y, cam.z);
         GeometryRenderState s = this.externalState;
         if (s == null) {
             s = this.modelState != null ? this.modelState : this.testState;
+        }
+        if (PbrModelRenderer.getInstance().hasModel()) {
+            return; // 有真实模型时不画测试干员/立方体
         }
         if (s == null || s.triangleCount() == 0) {
             return;
@@ -194,7 +198,6 @@ public final class TacticalRenderer {
                 topology == PrimitiveTopology.QUADS ? RenderSystem.getProjectionType().vertexSorting() : null);
 
         Vec3 camera = context.levelState().cameraRenderState.pos;
-        PbrModelRenderer.getInstance().prepare(camera.x, camera.y, camera.z);
         Matrix4f matrix = new Matrix4f().translate(
                 (float) (s.anchorX() - camera.x),
                 (float) (s.anchorY() - camera.y),
