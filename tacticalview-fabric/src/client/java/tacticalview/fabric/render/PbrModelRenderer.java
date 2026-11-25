@@ -219,7 +219,7 @@ public final class PbrModelRenderer {
         if (!uploaded) {
             return;
         }
-        GpuTextureView lightmap = Minecraft.getInstance().levelLightmap();
+        GpuTextureView lightmap = Minecraft.getInstance().gameRenderer.levelLightmap();
         if (lightmap == null) {
             return;
         }
