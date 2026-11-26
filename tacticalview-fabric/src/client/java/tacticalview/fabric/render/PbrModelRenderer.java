@@ -115,6 +115,7 @@ public final class PbrModelRenderer {
         final StaticMesh mesh;
         final Vector3f factors = new Vector3f();
         boolean blend;
+        float dist2;
         GpuBuffer vertexBuffer, indexBuffer;
         GpuTextureView baseColor, metalRough, normal, emissive;
 
@@ -156,13 +157,16 @@ public final class PbrModelRenderer {
                 this.gltf = g;
                 this.spec = sp;
                 int tris = 0;
-                java.util.Map<Integer, Boolean> partialCache = new java.util.HashMap<>();
+                java.util.Map<Integer, BufferedImage> decoded = new java.util.HashMap<>();
                 for (StaticMesh m : baked) {
                     Part part = new Part(m);
                     if (m.material >= 0 && m.material < g.materials.size()) {
                         GltfModel.Material mat = g.materials.get(m.material);
-                        if ("BLEND".equals(mat.alphaMode) && mat.baseColorImage >= 0) {
-                            part.blend = partialCache.computeIfAbsent(mat.baseColorImage, i -> hasPartialAlpha(g, i));
+                        // 不看 alphaMode（很多导出的模型没标 BLEND，但贴图里带着渐变透明度）：
+                        // 直接看这个部件的 UV 实际采到的贴图区域有没有半透明
+                        if (mat.baseColorImage >= 0) {
+                            BufferedImage img = decoded.computeIfAbsent(mat.baseColorImage, i -> decode(g, i));
+                            part.blend = usesTranslucentTexels(m, img);
                         }
                     }
                     parts.add(part);
@@ -170,6 +174,7 @@ public final class PbrModelRenderer {
                 }
                 // 不透明部分在前，半透明在后
                 parts.sort(java.util.Comparator.comparing((Part pt) -> pt.blend));
+                TacticalViewClient.LOGGER.info("PBR translucent parts: {}", parts.stream().filter(pt -> pt.blend).count());
                 TacticalViewClient.LOGGER.info("PBR model {} baked: {} parts, {} triangles", sp.path(), parts.size(), tris);
                 return;
             } catch (Exception e) {
@@ -180,25 +185,30 @@ public final class PbrModelRenderer {
         TacticalViewClient.LOGGER.info("No PBR model found (put wangzhaojun.glb or kurong_pbr.glb into src/client/resources/assets/tacticalview/models/)");
     }
 
-    /** BLEND 材质的贴图里是否真有"半透明"像素（>2% 的像素 alpha 在 10..245 之间）；否则当作镂空处理。 */
-    private static boolean hasPartialAlpha(GltfModel g, int imageIndex) {
+    private static BufferedImage decode(GltfModel g, int imageIndex) {
         try {
-            byte[] data = g.images.get(imageIndex).data;
-            BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(data));
-            if (img == null || !img.getColorModel().hasAlpha()) {
-                return false;
-            }
-            long partial = 0, total = (long) img.getWidth() * img.getHeight();
-            for (int y = 0; y < img.getHeight(); y++) {
-                for (int x = 0; x < img.getWidth(); x++) {
-                    int a = img.getRGB(x, y) >>> 24;
-                    if (a >= 10 && a <= 245) partial++;
-                }
-            }
-            return partial > total / 50;
+            return ImageIO.read(new java.io.ByteArrayInputStream(g.images.get(imageIndex).data));
         } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 按顶点 UV 采样贴图 alpha：超过 3% 的采样点 alpha < 245 就认为这个部件是半透明的。 */
+    private static boolean usesTranslucentTexels(StaticMesh m, BufferedImage img) {
+        if (img == null || !img.getColorModel().hasAlpha()) {
             return false;
         }
+        int n = m.uvs.length / 2, hits = 0, step = Math.max(1, n / 4000);
+        int samples = 0;
+        for (int i = 0; i < n; i += step) {
+            float u = m.uvs[i * 2] - (float) Math.floor(m.uvs[i * 2]);
+            float v = m.uvs[i * 2 + 1] - (float) Math.floor(m.uvs[i * 2 + 1]);
+            int x = Math.min(img.getWidth() - 1, (int) (u * img.getWidth()));
+            int y = Math.min(img.getHeight() - 1, (int) (v * img.getHeight()));
+            if ((img.getRGB(x, y) >>> 24) < 245) hits++;
+            samples++;
+        }
+        return samples > 0 && hits * 100L > samples * 3L;
     }
 
     public boolean hasModel() {
@@ -309,6 +319,16 @@ public final class PbrModelRenderer {
                 .translate((float) (anchorX - camX), (float) (anchorY - camY), (float) (anchorZ - camZ))
                 .rotateY(yaw)
                 .scale(spec != null ? spec.scale() : 1f);
+        // 半透明部件按离相机的距离从远到近排序（部件包围盒中心，相机在原点）
+        org.joml.Vector3f c = new org.joml.Vector3f();
+        for (Part part : parts) {
+            if (!part.blend) continue;
+            float[] bb = part.mesh.bounds;
+            modelMatrix.transformPosition((bb[0] + bb[3]) * 0.5f, (bb[1] + bb[4]) * 0.5f, (bb[2] + bb[5]) * 0.5f, c);
+            part.dist2 = c.lengthSquared();
+        }
+        parts.sort(java.util.Comparator.comparing((Part pt) -> pt.blend)
+                .thenComparing((Part pt) -> pt.blend ? -pt.dist2 : 0f));
     }
 
     public void draw(RenderPass pass) {
