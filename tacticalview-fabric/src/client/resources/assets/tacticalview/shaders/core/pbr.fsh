@@ -25,6 +25,7 @@ layout(location = 0) out vec4 fragColor;
 //   ModelOffset.xy    = glTF 材质的 metallicFactor / roughnessFactor
 //   ModelOffset.z     = 1 表示半透明（alpha 混合），0 表示不透明/镂空
 const float PI = 3.14159265359;
+const float EXPOSURE = 1.1;
 
 vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
 
@@ -97,8 +98,12 @@ void main() {
     color += (albedo * (1.0 - metallic) * 0.55 + ambientSpec) * lightmap * hemi;
     color += emissive;
 
-    // 简单色调映射并回到显示空间（原版帧缓冲不是线性的）
-    color = color / (color + vec3(1.0)) * 1.15;
+    // 不做色调映射（Reinhard 会把颜色压灰）：满光照下应基本还原贴图颜色，只对极亮处做柔和压缩
+    color *= EXPOSURE;
+    float peak = max(color.r, max(color.g, color.b));
+    if (peak > 1.0) {
+        color /= peak; // 保持色相，避免单通道先爆掉变白
+    }
     vec4 outColor = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), blendMode ? base.a : 1.0);
     fragColor = apply_fog(outColor, sphericalVertexDistance, cylindricalVertexDistance,
             FogEnvironmentalStart, FogEnvironmentalEnd, FogRenderDistanceStart, FogRenderDistanceEnd, FogColor);
